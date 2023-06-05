@@ -4,11 +4,13 @@
     "eslint:recommended",
     "plugin:github/recommended",
     "plugin:github/internal",
-    "plugin:github/typescript"
+    "plugin:github/typescript",
+    "plugin:prettier/recommended"
   ],
   "plugins": [
     "github",
-    "sort-keys-fix"
+    "sort-keys-fix",
+    "prettier"
   ],
   "settings": {
     "import/ignore": [
@@ -56,6 +58,7 @@
     "array-bracket-spacing": ["error", "never"],
     "computed-property-spacing": ["error", "never"],
     // Clean plugins rules
+    "max-len": ["error", { "code": 80, "ignoreUrls": true }],
     "i18n-text/no-en": 0,
     "import/no-unresolved": 0,
     "import/extensions": 0,
