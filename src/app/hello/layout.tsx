@@ -1,14 +1,24 @@
-export default function HelloLayout({children}: {children: React.ReactNode}) {
-  console.log('HelloLayout render')
+import Link from 'next/link'
+
+export default function HelloLayout({
+  children,
+  authModal,
+}: {
+  children: React.ReactNode
+  authModal: React.ReactNode
+}) {
   return (
     <div>
       <h1>HelloLayout</h1>
       <nav>
         <ul>
-          <li>nav 1</li>
+          <li>
+            <Link href="/hello/login">Login</Link>
+          </li>
         </ul>
       </nav>
       {children}
+      {authModal}
     </div>
   )
 }
