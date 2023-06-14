@@ -52,6 +52,14 @@
         }
       }
     ],
+    "max-len": [
+      "error",
+      {
+        "code": 80,
+        "ignoreUrls": true,
+        "ignorePattern": "^import.*from.*"
+      }
+    ],
     "object-curly-spacing": ["error", "never"],
     "array-bracket-spacing": ["error", "never"],
     "computed-property-spacing": ["error", "never"],
