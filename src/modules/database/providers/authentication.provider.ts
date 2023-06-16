@@ -5,7 +5,6 @@ import {
   DEFAULT_DATABASE,
   DEFAULT_NAMESPACE,
 } from '../constants'
-import {Database} from '../library/database'
 
 export type SignUpCredentials = {
   email: string
@@ -39,11 +38,17 @@ export type AuthProvider = ReturnType<typeof createAuthProvider>
 
 export const createAuthProvider = async (dbProvider: DatabaseProvider) => {
   return {
-    currentUser: async (token: string): Promise<{user: UserRecord}> => {
+    authenticate: async (token: string): Promise<void> => {
       await dbProvider.authenticate(token)
-      const [{result}] = await dbProvider.query<[UserRecord[]]>(
+    },
+    currentUser: async (): Promise<{user: UserRecord}> => {
+      const [{result, status, detail}] = await dbProvider.query<[UserRecord[]]>(
         `SELECT id, username, email FROM $auth;`
       )
+
+      if (status === 'ERR') {
+        throw new Error(detail)
+      }
 
       if (!result) {
         throw new Error('Auth query failed')
@@ -60,12 +65,16 @@ export const createAuthProvider = async (dbProvider: DatabaseProvider) => {
       })
 
       if (!token) {
-        throw new Error('User not found')
+        throw new Error('Sign in query failed')
       }
 
-      const [{result}] = await dbProvider.query<[UserRecord[]]>(
+      const [{result, status, detail}] = await dbProvider.query<[UserRecord[]]>(
         `SELECT id, username, email FROM $auth;`
       )
+
+      if (status === 'ERR') {
+        throw new Error(detail)
+      }
 
       if (!result) {
         throw new Error('Auth query failed')
@@ -81,10 +90,13 @@ export const createAuthProvider = async (dbProvider: DatabaseProvider) => {
         password: credentials.password,
         username: credentials.username,
       })
-
-      const [{result}] = await dbProvider.query<[UserRecord[]]>(
+      const [{result, status, detail}] = await dbProvider.query<[UserRecord[]]>(
         `SELECT id, username, email FROM $auth;`
       )
+
+      if (status === 'ERR') {
+        throw new Error(detail)
+      }
 
       if (!result) {
         throw new Error('Auth query failed')

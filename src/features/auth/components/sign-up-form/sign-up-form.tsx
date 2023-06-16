@@ -19,6 +19,15 @@ export const SignUpForm = () => {
     }
 
     await signUpAction(credentials)
+
+    /**
+     * TODO: Find way to refresh "currentUserQuery"
+     * without refreshing all server components
+     * Components: - Navigation
+     *
+     * Fix frontend pre-fetch and one time forever caching
+     * Invalidation of cache on demand
+     */
     router.refresh()
     router.push('/')
   }

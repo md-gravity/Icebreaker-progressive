@@ -8,7 +8,9 @@ export const SectionContainer: FC<Props> = ({children}) => {
   return (
     <div
       className={`
-        w-3/5 m-auto
+        w-3/5 mx-auto
+        grow
+        pt-20
       `}
     >
       {children}

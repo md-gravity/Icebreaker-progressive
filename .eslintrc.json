@@ -64,6 +64,7 @@
     "array-bracket-spacing": ["error", "never"],
     "computed-property-spacing": ["error", "never"],
     // Clean plugins rules
+    "github/no-then": 0,
     "i18n-text/no-en": 0,
     "import/no-unresolved": 0,
     "import/extensions": 0,

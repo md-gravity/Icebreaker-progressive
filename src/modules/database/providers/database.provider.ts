@@ -14,6 +14,7 @@ export const createDatabaseProvider = (database: Database) => {
     get status() {
       return database.status
     },
+    wait: database.wait.bind(database),
   }
 }
 
@@ -27,6 +28,10 @@ export const startSession = async <Payload>(
   const provider = createDatabaseProvider(createDatabase())
 
   try {
+    /**
+     * TODO: Do wee need it?
+     */
+    await provider.wait()
     return await sessionFunction(provider)
     // eslint-disable-next-line no-useless-catch
   } catch (e) {
@@ -34,6 +39,9 @@ export const startSession = async <Payload>(
   } finally {
     const connectionIsOpen = provider.status === 0
     if (connectionIsOpen) {
+      /**
+       * TODO: Check when time will be reduced
+       */
       provider.close() // takes ~5s on await
     }
   }

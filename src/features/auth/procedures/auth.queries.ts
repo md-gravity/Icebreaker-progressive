@@ -3,7 +3,8 @@ import {cookies} from 'next/headers'
 import {startSession, createAuthProvider} from '@modules/database'
 
 /**
- * TODO: fix unnecessary calls in components
+ * TODO: Find a way to cache this query
+ * over the server render round-trip
  * Components: - AuthLayout, - Navigation
  */
 export const currentUserQuery = async () => {
@@ -14,6 +15,7 @@ export const currentUserQuery = async () => {
 
   return await startSession(async (dbProvider) => {
     const authProvider = await createAuthProvider(dbProvider)
-    return await authProvider.currentUser(token)
+    await authProvider.authenticate(token)
+    return await authProvider.currentUser()
   })
 }

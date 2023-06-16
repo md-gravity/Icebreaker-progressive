@@ -6,12 +6,8 @@ import {AUTH_SCOPE_NAME} from '../constants'
     await dbProvider.query(`
     -- Create user table
     DEFINE TABLE user SCHEMALESS
-      PERMISSIONS
-        FOR create, delete
-          WHERE $auth.admin = true
-        FOR select, update
-          WHERE id = $auth.id
-          OR $auth.admin = true;
+      PERMISSIONS FOR select, create, update, delete
+       WHERE true;
 
     DEFINE FIELD email ON TABLE user TYPE string
     ASSERT $value != NONE
@@ -21,6 +17,20 @@ import {AUTH_SCOPE_NAME} from '../constants'
     ASSERT $value != NONE;
 
     DEFINE INDEX userEmailIndex ON TABLE user COLUMNS email UNIQUE;
+  `)
+
+    await dbProvider.query(`
+    -- Create room table
+    DEFINE TABLE room SCHEMALESS;
+
+    DEFINE FIELD url ON TABLE room TYPE string;
+
+    DEFINE INDEX roomUrlIndex ON TABLE user COLUMNS url UNIQUE;
+  `)
+
+    await dbProvider.query(`
+    -- Create message table
+    DEFINE TABLE message SCHEMALESS;
   `)
 
     await dbProvider.query(`
