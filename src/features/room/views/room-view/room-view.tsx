@@ -1,15 +1,15 @@
 'use client'
 
-import {FC, FormEvent, useEffect, useReducer, useState} from 'react'
+import {FC, FormEvent, useEffect, useReducer, useRef, useState} from 'react'
 
 interface Props {
   url: string
-  token: string
+  user: any
 
   messagesHistory: any[]
 }
 
-export const RoomView: FC<Props> = ({url, messagesHistory}) => {
+export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
   const [text, setText] = useState('')
   const [messages, addMessage] = useReducer(
     (cache, newMessage) => [...cache, newMessage],
@@ -31,13 +31,128 @@ export const RoomView: FC<Props> = ({url, messagesHistory}) => {
     const see = new EventSource(`/api/chat?roomUrl=${url}`, {
       withCredentials: true,
     })
+
     see.addEventListener('message', (e) => {
       addMessage(JSON.parse(e.data).message)
+      const messagetext: string = JSON.parse(e.data).message.text
+
+      if (
+        messagetext.search(/type.*offer/gi) !== -1 &&
+        JSON.parse(e.data).message.sender.id !== user.id
+      ) {
+        const offer = JSON.parse(messagetext)
+        const remoteConnection = new RTCPeerConnection()
+
+        remoteConnection.onicecandidate = () => {
+          console.log(
+            'candidate',
+            JSON.stringify(remoteConnection.localDescription)
+          )
+
+          fetch('/api/chat', {
+            body: JSON.stringify({
+              roomUrl: url,
+              text: JSON.stringify(remoteConnection.localDescription),
+            }),
+            credentials: 'include',
+            method: 'POST',
+          })
+        }
+
+        remoteConnection.ondatachannel = (e) => {
+          const dataChannel = e.channel
+
+          dataChannel.onmessage = (e) => {
+            console.log('message', JSON.parse(e.data))
+          }
+
+          dataChannel.onopen = (e) => {
+            console.log('remote open')
+
+            dataChannel.send(JSON.stringify({text: 'hello'}))
+          }
+        }
+
+        remoteConnection.setRemoteDescription(offer).then((e) => {
+          console.log('remote offer set')
+        })
+
+        remoteConnection.createAnswer().then((answer) => {
+          remoteConnection.setLocalDescription(answer).then((e) => {
+            console.log('answer set')
+          })
+        })
+      }
+
+      if (
+        messagetext.search(/type.*answer/gi) !== -1 &&
+        JSON.parse(e.data).message.sender.id !== user.id
+      ) {
+        const answer = JSON.parse(messagetext)
+        if (global.setted) return
+
+        global.setted = global.setted ?? false
+        global.localConnection.setRemoteDescription(answer).then((e) => {
+          global.setted = true
+          console.log('answer set')
+        })
+      }
     })
 
     return () => {
       see.close()
     }
+  }, [url, user.id])
+
+  useEffect(() => {
+    /**
+     * TODO: p2p
+     * 1) You should decide who will be offerer and who will be answerer
+     * One peer can not be both offerer and answerer for the same connection
+     *
+     * 2) You should send only one ice candidate to remote peer
+     */
+    console.log('effect')
+    const localConnection = new RTCPeerConnection()
+    global.localConnection = global.localConnection ?? localConnection
+    const dataChannel = localConnection.createDataChannel('chat')
+
+    dataChannel.onopen = () => {
+      console.log('local open')
+    }
+
+    dataChannel.onmessage = (e) => {
+      console.log('message', JSON.parse(e.data))
+    }
+
+    global.getted = global.getted ?? false
+    // 2) after setup local description, we get ice candidates
+    localConnection.onicecandidate = () => {
+      console.log('candidate', JSON.stringify(localConnection.localDescription))
+
+      if (global.getted) return
+
+      global.getted = true
+      // 3) send ice candidates to remote peer
+      fetch('/api/chat', {
+        body: JSON.stringify({
+          roomUrl: url,
+          text: JSON.stringify(localConnection.localDescription),
+        }),
+        credentials: 'include',
+        method: 'POST',
+      })
+    }
+
+    // 1) create offer and set it as local description
+    localConnection
+      .createOffer()
+      .then((offer) => {
+        return localConnection.setLocalDescription(offer)
+      })
+      .then(() => {
+        console.log('setup successfully')
+      })
   }, [url])
 
   return (
