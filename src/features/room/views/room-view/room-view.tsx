@@ -2,6 +2,8 @@
 
 import {FC, FormEvent, useEffect, useReducer, useState} from 'react'
 
+import {createWebRTCConnection} from '@modules/webrtc/create-connection'
+
 interface Props {
   url: string
   user: any
@@ -58,6 +60,84 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
     messagesHistory
   )
 
+  useEffect(() => {
+    ;(async () => {
+      const see = new EventSource(`/api/chat?roomUrl=${url}`, {
+        withCredentials: true,
+      })
+
+      see.addEventListener('message', async (e) => {
+        const sseMessage: SSEMessage = JSON.parse(e.data)
+        const messageType = sseMessage.type
+        const message = sseMessage.message
+        const sender = message.sender
+
+        const sameUser = sender.id === user.id
+        if (sameUser) {
+          return
+        }
+
+        const description = JSON.parse(message.text)
+
+        const isOffer = messageType === MessageType.Offer
+        if (isOffer) {
+          const connection = createWebRTCConnection()
+          global.connection = connection
+          await connection.createAnswer(description)
+
+          connection.onOpen((e) => {
+            console.log('on Open remote', e.data)
+          })
+
+          connection.onData((e) => {
+            addMessage(JSON.parse(e.data).message)
+          })
+
+          await fetch('/api/chat', {
+            body: JSON.stringify({
+              message: {
+                text: JSON.stringify(connection.localDescription),
+              },
+              roomUrl: url,
+              type: 'answer',
+            }),
+            credentials: 'include',
+            method: 'POST',
+          })
+        }
+
+        const isAnswer = messageType === MessageType.Answer
+        if (isAnswer) {
+          await connectionInitiator.setRemoteDescription(description)
+        }
+      })
+
+      const connectionInitiator = createWebRTCConnection()
+      global.connection = connectionInitiator
+      await connectionInitiator.createOffer('chat')
+
+      connectionInitiator.onData((e) => {
+        addMessage(JSON.parse(e.data).message)
+      })
+
+      connectionInitiator.onOpen((e) => {
+        console.log('init open', e.data)
+      })
+
+      await fetch('/api/chat', {
+        body: JSON.stringify({
+          message: {
+            text: JSON.stringify(connectionInitiator.localDescription),
+          },
+          roomUrl: url,
+          type: 'offer',
+        }),
+        credentials: 'include',
+        method: 'POST',
+      })
+    })()
+  }, [url, user.id])
+
   const send = async (e: FormEvent) => {
     e.preventDefault()
 
@@ -78,153 +158,11 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
         credentials: 'include',
         method: 'POST',
       }).then((res) => res.json())
-      const dataChannel: RTCDataChannel = global.dataChannel
-      console.log('send', data)
       addMessage(data.message)
-      dataChannel.send(JSON.stringify(data))
+      global.connection.sendData(JSON.stringify(data))
     }
     setText('')
   }
-
-  useEffect(() => {
-    const see = new EventSource(`/api/chat?roomUrl=${url}`, {
-      withCredentials: true,
-    })
-
-    see.addEventListener('message', (e) => {
-      const sseMessage: SSEMessage = JSON.parse(e.data)
-      const messageType = sseMessage.type
-      const message = sseMessage.message
-      const sender = message.sender
-
-      if (messageType === MessageType.Message) {
-        addMessage(message)
-      }
-
-      const isOffer = messageType === MessageType.Offer
-      const sameUser = sender.id === user.id
-      if (isOffer && !sameUser) {
-        const offer = JSON.parse(message.text)
-        const remoteConnection = new RTCPeerConnection()
-
-        remoteConnection.onicecandidate = () => {
-          console.log(
-            'candidate',
-            JSON.stringify(remoteConnection.localDescription)
-          )
-
-          fetch('/api/chat', {
-            body: JSON.stringify(
-              createPayload({
-                roomUrl: url,
-                text: JSON.stringify(remoteConnection.localDescription),
-                type: MessageType.Answer,
-              })
-            ),
-            credentials: 'include',
-            method: 'POST',
-          })
-        }
-
-        remoteConnection.ondatachannel = (e) => {
-          const dataChannel = e.channel
-          global.dataChannel = dataChannel
-
-          dataChannel.onmessage = (e) => {
-            const {message: peerMessage} = JSON.parse(e.data)
-            console.log('remote message', peerMessage)
-            addMessage(peerMessage)
-          }
-
-          dataChannel.onopen = (e) => {
-            console.log('remote open')
-          }
-        }
-
-        remoteConnection.setRemoteDescription(offer).then((e) => {
-          console.log('remote offer set')
-        })
-
-        remoteConnection.createAnswer().then((answer) => {
-          remoteConnection.setLocalDescription(answer).then((e) => {
-            console.log('answer set')
-          })
-        })
-      }
-
-      const isAnswer = messageType === MessageType.Answer
-      if (isAnswer && !sameUser) {
-        const answer = JSON.parse(message.text)
-        if (global.setted) return
-
-        global.setted = global.setted ?? false
-        global.localConnection.setRemoteDescription(answer).then((e) => {
-          global.setted = true
-          console.log('answer set')
-        })
-      }
-    })
-
-    return () => {
-      see.close()
-    }
-  }, [url, user.id])
-
-  useEffect(() => {
-    /**
-     * TODO: p2p
-     * 1) You should decide who will be offerer and who will be answerer
-     * One peer can not be both offerer and answerer for the same connection
-     *
-     * 2) You should send only one ice candidate to remote peer
-     */
-    const localConnection = new RTCPeerConnection()
-    global.localConnection = localConnection
-    const dataChannel = localConnection.createDataChannel('room')
-    global.dataChannel = dataChannel
-
-    dataChannel.onopen = () => {
-      console.log('local open')
-    }
-
-    dataChannel.onmessage = (e) => {
-      const {message: peerMessage} = JSON.parse(e.data)
-      console.log('local message', peerMessage)
-      addMessage(peerMessage)
-    }
-
-    global.getted = global.getted ?? false
-    // 2) after setup local description, we get ice candidates
-    localConnection.onicecandidate = () => {
-      console.log('candidate', JSON.stringify(localConnection.localDescription))
-
-      if (global.getted) return
-
-      global.getted = true
-      // 3) send ice candidates to remote peer
-      fetch('/api/chat', {
-        body: JSON.stringify(
-          createPayload({
-            roomUrl: url,
-            text: JSON.stringify(localConnection.localDescription),
-            type: MessageType.Offer,
-          })
-        ),
-        credentials: 'include',
-        method: 'POST',
-      })
-    }
-
-    // 1) create offer and set it as local description
-    localConnection
-      .createOffer()
-      .then((offer) => {
-        return localConnection.setLocalDescription(offer)
-      })
-      .then(() => {
-        console.log('setup successfully')
-      })
-  }, [url])
 
   return (
     <div
