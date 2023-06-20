@@ -23,14 +23,39 @@ const getRoomEmitter = (url: string): EventEmitter => {
   )
 }
 
+enum MessageType {
+  Offer = 'offer',
+  Answer = 'answer',
+  Message = 'message',
+}
+
+interface Payload {
+  message: Message
+  type: MessageType
+  roomUrl: string
+}
+
+interface Message {
+  text: string
+}
+
+interface SSEMessage {
+  type: MessageType
+  message: {
+    text: string
+    sender: any
+    room: any
+  }
+}
+
 export const POST = async (request: Request) => {
   const token = cookies().get('token')?.value
   if (!token) {
     throw new Error('No token provided')
   }
 
-  const body = await request.json()
-  const roomUrl = body.roomUrl
+  const payload: Payload = await request.json()
+  const roomUrl = payload.roomUrl
   if (!roomUrl) {
     throw new Error('No room url provided')
   }
@@ -39,28 +64,63 @@ export const POST = async (request: Request) => {
    * TODO: Check if room exists
    */
 
-  const text = body.text
-  if (!text) {
+  const originMessage = payload.message
+  if (!originMessage.text) {
     throw new Error('No text provided')
   }
 
-  const {message} = await startSession(async (dbProvider) => {
-    const authProvider = await createAuthProvider(dbProvider)
-    await authProvider.authenticate(token)
-
-    const roomProvider = await createRoomProvider(dbProvider)
-    const {room} = await roomProvider.findRoom(roomUrl)
-    const {message: createdMessage} = await roomProvider.createMessage(
-      text,
-      room.id
-    )
-    return await roomProvider.findMessage(createdMessage.id)
-  })
-
   const roomEmitter = getRoomEmitter(roomUrl)
-  roomEmitter.emit('message', {message})
 
-  return NextResponse.json({status: 'ok'})
+  if (payload.type === MessageType.Message) {
+    const {message} = await startSession(async (dbProvider) => {
+      const authProvider = await createAuthProvider(dbProvider)
+      await authProvider.authenticate(token)
+
+      const roomProvider = await createRoomProvider(dbProvider)
+      const {room} = await roomProvider.findRoom(roomUrl)
+      const {message: createdMessage} = await roomProvider.createMessage(
+        originMessage.text,
+        room.id
+      )
+      return await roomProvider.findMessage(createdMessage.id)
+    })
+
+    const sseMessage: SSEMessage = {
+      message,
+      type: MessageType.Message,
+    }
+    roomEmitter.emit('message', sseMessage)
+
+    return NextResponse.json({status: 'ok'})
+  }
+
+  if ([MessageType.Offer, MessageType.Answer].includes(payload.type)) {
+    const {user, room} = await startSession(async (dbProvider) => {
+      const authProvider = await createAuthProvider(dbProvider)
+      await authProvider.authenticate(token)
+
+      const roomProvider = await createRoomProvider(dbProvider)
+
+      return {
+        room: (await roomProvider.findRoom(roomUrl)).room,
+        user: (await authProvider.currentUser()).user,
+      }
+    })
+
+    const sseMessage: SSEMessage = {
+      message: {
+        ...originMessage,
+        room,
+        sender: user,
+      },
+      type: payload.type,
+    }
+    roomEmitter.emit('message', sseMessage)
+
+    return NextResponse.json({status: 'ok'})
+  }
+
+  return NextResponse.json({message: 'Unknown message type', status: 'failure'})
 }
 
 export const GET = async (request: Request) => {
@@ -82,7 +142,7 @@ export const GET = async (request: Request) => {
   const roomEmitter = getRoomEmitter(roomUrl)
   const eventStream = new ReadableStream({
     async start(controller) {
-      roomEmitter.on('message', (message) => {
+      roomEmitter.on('message', (message: SSEMessage) => {
         controller.enqueue(
           new TextEncoder().encode(`data: ${JSON.stringify(message)}\n\n`)
         )

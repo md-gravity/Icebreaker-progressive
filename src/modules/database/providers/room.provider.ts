@@ -16,6 +16,7 @@ type FindMessageRecord = {
   id: string
   text: string
   sender: UserRecord
+  room: RoomRecord
 }
 
 export const createRoomProvider = async (dbProvider: DatabaseProvider) => {
@@ -76,7 +77,7 @@ export const createRoomProvider = async (dbProvider: DatabaseProvider) => {
         [FindMessageRecord[]]
       >(
         `
-        SELECT * FROM message WHERE id = $id FETCH sender;
+        SELECT * FROM message WHERE id = $id FETCH sender, room;
       `,
         {id}
       )

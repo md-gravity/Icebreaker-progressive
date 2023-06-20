@@ -1,12 +1,54 @@
 'use client'
 
-import {FC, FormEvent, useEffect, useReducer, useRef, useState} from 'react'
+import {FC, FormEvent, useEffect, useReducer, useState} from 'react'
 
 interface Props {
   url: string
   user: any
 
   messagesHistory: any[]
+}
+
+enum MessageType {
+  Offer = 'offer',
+  Answer = 'answer',
+  Message = 'message',
+}
+interface Message {
+  text: string
+}
+
+interface Payload {
+  message: Message
+  type: MessageType
+  roomUrl: string
+}
+
+interface SSEMessage {
+  type: MessageType
+  message: {
+    text: string
+    sender: any
+    room: any
+  }
+}
+
+function createPayload({
+  type = MessageType.Message,
+  text,
+  roomUrl,
+}: {
+  roomUrl: string
+  type: MessageType
+  text: string
+}): Payload {
+  return {
+    message: {
+      text,
+    },
+    roomUrl,
+    type,
+  }
 }
 
 export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
@@ -20,7 +62,9 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
     e.preventDefault()
 
     await fetch('/api/chat', {
-      body: JSON.stringify({roomUrl: url, text}),
+      body: JSON.stringify(
+        createPayload({roomUrl: url, text, type: MessageType.Message})
+      ),
       credentials: 'include',
       method: 'POST',
     })
@@ -33,14 +77,21 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
     })
 
     see.addEventListener('message', (e) => {
-      addMessage(JSON.parse(e.data).message)
-      const messagetext: string = JSON.parse(e.data).message.text
+      const sseMessage: SSEMessage = JSON.parse(e.data)
+      const messageType = sseMessage.type
+      const message = sseMessage.message
+      const sender = message.sender
 
-      if (
-        messagetext.search(/type.*offer/gi) !== -1 &&
-        JSON.parse(e.data).message.sender.id !== user.id
-      ) {
-        const offer = JSON.parse(messagetext)
+      if (messageType === MessageType.Message) {
+        console.log(message)
+        addMessage(message)
+      }
+
+      console.log(messageType)
+      const isOffer = messageType === MessageType.Offer
+      const sameUser = sender.id === user.id
+      if (isOffer && !sameUser) {
+        const offer = JSON.parse(message.text)
         const remoteConnection = new RTCPeerConnection()
 
         remoteConnection.onicecandidate = () => {
@@ -50,10 +101,13 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
           )
 
           fetch('/api/chat', {
-            body: JSON.stringify({
-              roomUrl: url,
-              text: JSON.stringify(remoteConnection.localDescription),
-            }),
+            body: JSON.stringify(
+              createPayload({
+                roomUrl: url,
+                text: JSON.stringify(remoteConnection.localDescription),
+                type: MessageType.Answer,
+              })
+            ),
             credentials: 'include',
             method: 'POST',
           })
@@ -84,11 +138,9 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
         })
       }
 
-      if (
-        messagetext.search(/type.*answer/gi) !== -1 &&
-        JSON.parse(e.data).message.sender.id !== user.id
-      ) {
-        const answer = JSON.parse(messagetext)
+      const isAnswer = messageType === MessageType.Answer
+      if (isAnswer && !sameUser) {
+        const answer = JSON.parse(message.text)
         if (global.setted) return
 
         global.setted = global.setted ?? false
@@ -112,7 +164,6 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
      *
      * 2) You should send only one ice candidate to remote peer
      */
-    console.log('effect')
     const localConnection = new RTCPeerConnection()
     global.localConnection = global.localConnection ?? localConnection
     const dataChannel = localConnection.createDataChannel('chat')
@@ -135,10 +186,13 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
       global.getted = true
       // 3) send ice candidates to remote peer
       fetch('/api/chat', {
-        body: JSON.stringify({
-          roomUrl: url,
-          text: JSON.stringify(localConnection.localDescription),
-        }),
+        body: JSON.stringify(
+          createPayload({
+            roomUrl: url,
+            text: JSON.stringify(localConnection.localDescription),
+            type: MessageType.Offer,
+          })
+        ),
         credentials: 'include',
         method: 'POST',
       })
