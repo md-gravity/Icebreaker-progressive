@@ -61,13 +61,28 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
   const send = async (e: FormEvent) => {
     e.preventDefault()
 
-    await fetch('/api/chat', {
-      body: JSON.stringify(
-        createPayload({roomUrl: url, text, type: MessageType.Message})
-      ),
-      credentials: 'include',
-      method: 'POST',
-    })
+    const api: 'webrtc' | 'rest' = 'webrtc'
+    if (api === 'rest') {
+      await fetch('/api/chat', {
+        body: JSON.stringify(
+          createPayload({roomUrl: url, text, type: MessageType.Message})
+        ),
+        credentials: 'include',
+        method: 'POST',
+      })
+    }
+
+    if (api === 'webrtc') {
+      const data = await fetch('/api/messages', {
+        body: JSON.stringify({message: {text}, roomUrl: url}),
+        credentials: 'include',
+        method: 'POST',
+      }).then((res) => res.json())
+      const dataChannel: RTCDataChannel = global.dataChannel
+      console.log('send', data)
+      addMessage(data.message)
+      dataChannel.send(JSON.stringify(data))
+    }
     setText('')
   }
 
@@ -83,11 +98,9 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
       const sender = message.sender
 
       if (messageType === MessageType.Message) {
-        console.log(message)
         addMessage(message)
       }
 
-      console.log(messageType)
       const isOffer = messageType === MessageType.Offer
       const sameUser = sender.id === user.id
       if (isOffer && !sameUser) {
@@ -115,15 +128,16 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
 
         remoteConnection.ondatachannel = (e) => {
           const dataChannel = e.channel
+          global.dataChannel = dataChannel
 
           dataChannel.onmessage = (e) => {
-            console.log('message', JSON.parse(e.data))
+            const {message: peerMessage} = JSON.parse(e.data)
+            console.log('remote message', peerMessage)
+            addMessage(peerMessage)
           }
 
           dataChannel.onopen = (e) => {
             console.log('remote open')
-
-            dataChannel.send(JSON.stringify({text: 'hello'}))
           }
         }
 
@@ -165,15 +179,18 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
      * 2) You should send only one ice candidate to remote peer
      */
     const localConnection = new RTCPeerConnection()
-    global.localConnection = global.localConnection ?? localConnection
-    const dataChannel = localConnection.createDataChannel('chat')
+    global.localConnection = localConnection
+    const dataChannel = localConnection.createDataChannel('room')
+    global.dataChannel = dataChannel
 
     dataChannel.onopen = () => {
       console.log('local open')
     }
 
     dataChannel.onmessage = (e) => {
-      console.log('message', JSON.parse(e.data))
+      const {message: peerMessage} = JSON.parse(e.data)
+      console.log('local message', peerMessage)
+      addMessage(peerMessage)
     }
 
     global.getted = global.getted ?? false

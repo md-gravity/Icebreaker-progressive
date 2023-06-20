@@ -25,6 +25,7 @@ export const createRoomProvider = async (dbProvider: DatabaseProvider) => {
       text: string,
       roomId: string
     ): Promise<{message: CreatedMessageRecord}> {
+      // TODO: Add timezone for each user
       const [{result, status, detail}] = await dbProvider.query<
         [CreatedMessageRecord[]]
       >(
@@ -33,6 +34,7 @@ export const createRoomProvider = async (dbProvider: DatabaseProvider) => {
           text: $text,
           sender: $auth.id,
           room: $roomId,
+          createdAt: time::now(),
         };
       `,
         {roomId, text}
@@ -103,7 +105,9 @@ export const createRoomProvider = async (dbProvider: DatabaseProvider) => {
         [FindMessageRecord[]]
       >(
         `
-        SELECT * FROM message WHERE room = $roomId FETCH sender;
+        SELECT * FROM message WHERE room = $roomId 
+        ORDER BY createdAt ASC
+        FETCH sender, room;
       `,
         {roomId}
       )
