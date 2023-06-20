@@ -15,6 +15,9 @@ enum MessageType {
   Offer = 'offer',
   Answer = 'answer',
   Message = 'message',
+  Init = 'init',
+  Join = 'join',
+  Leave = 'leave',
 }
 interface Message {
   text: string
@@ -26,6 +29,10 @@ interface Payload {
   roomUrl: string
 }
 
+/**
+ * TODO: create different types for different messages
+ * 1) Join message don't need text
+ */
 interface SSEMessage {
   type: MessageType
   message: {
@@ -35,6 +42,9 @@ interface SSEMessage {
   }
 }
 
+/**
+ * TODO: create different types for different messages
+ */
 function createPayload({
   type = MessageType.Message,
   text,
@@ -53,6 +63,9 @@ function createPayload({
   }
 }
 
+type UserId = string
+const usersMap = new Map<UserId, ReturnType<typeof createWebRTCConnection>>()
+
 export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
   const [text, setText] = useState('')
   const [messages, addMessage] = useReducer(
@@ -61,42 +74,189 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
   )
 
   useEffect(() => {
+    const see = new EventSource(`/api/chat?roomUrl=${url}`, {
+      withCredentials: true,
+    })
+
+    see.onmessage = async (e) => {
+      const sseMessage: SSEMessage = JSON.parse(e.data)
+      const messageType = sseMessage.type
+
+      if (sseMessage.type === MessageType.Init) {
+        await fetch('/api/chat', {
+          body: JSON.stringify({
+            roomUrl: url,
+            type: 'join',
+          }),
+          credentials: 'include',
+          method: 'POST',
+        })
+        return
+      }
+
+      const message = sseMessage.message
+      const sender = message.sender
+
+      const sameUser = sender.id === user.id
+      if (sameUser) {
+        return
+      }
+
+      // TODO: make with sender
+      const connection =
+        usersMap.get(user.id) ??
+        usersMap.set(user.id, createWebRTCConnection()).get(user.id)
+
+      if (!connection) {
+        throw new Error('connection not found')
+      }
+
+      const isJoin = messageType === MessageType.Join
+      if (isJoin) {
+        await connection.createOffer('chat')
+
+        await fetch('/api/chat', {
+          body: JSON.stringify({
+            message: {
+              text: JSON.stringify(connection.localDescription),
+            },
+            roomUrl: url,
+            type: 'offer',
+          }),
+          credentials: 'include',
+          method: 'POST',
+        })
+      }
+
+      const isLeave = messageType === MessageType.Leave
+      if (isLeave) {
+        // TODO: make with sender
+        connection.close()
+        usersMap.delete(user.id)
+      }
+
+      const isAnswer = messageType === MessageType.Answer
+      if (isAnswer) {
+        const answer = JSON.parse(message.text)
+        await connection.setRemoteDescription(answer)
+
+        // TODO: clean up
+        connection.onData((e) => {
+          addMessage(JSON.parse(e.data).message)
+        })
+
+        connection.onOpen((e) => {
+          console.log('open', e.data)
+        })
+      }
+
+      const isOffer = messageType === MessageType.Offer
+      if (isOffer) {
+        const offer = JSON.parse(message.text)
+        await connection.createAnswer(offer)
+
+        await fetch('/api/chat', {
+          body: JSON.stringify({
+            message: {
+              text: JSON.stringify(connection.localDescription),
+            },
+            roomUrl: url,
+            type: 'answer',
+          }),
+          credentials: 'include',
+          method: 'POST',
+        })
+
+        // TODO: clean up
+        connection.onData((e) => {
+          addMessage(JSON.parse(e.data).message)
+        })
+
+        connection.onOpen((e) => {
+          console.log('open', e.data)
+        })
+      }
+    }
+  }, [url, user.id])
+
+  /*
+  useEffect(() => {
     ;(async () => {
       const see = new EventSource(`/api/chat?roomUrl=${url}`, {
         withCredentials: true,
       })
 
-      see.addEventListener('message', async (e) => {
+      see.onopen = (e) => {
+        setSseReady(true)
+      }
+
+      type UserId = string
+      const usersMap = new Map<UserId, RTCPeerConnection>()
+
+      see.onmessage = async (e) => {
         const sseMessage: SSEMessage = JSON.parse(e.data)
         const messageType = sseMessage.type
+
+        // TODO: need to trigger onopen event on client side
+        if (messageType === MessageType.Init) {
+          return
+        }
+
         const message = sseMessage.message
         const sender = message.sender
 
         const sameUser = sender.id === user.id
+
+        const webRTCConnection = createWebRTCConnection()
+
+        webRTCConnection.onData((e) => {
+          console.log(e.data)
+          addMessage(JSON.parse(e.data).message)
+        })
+
+        webRTCConnection.onOpen((e) => {
+          console.log('init open', e.data)
+        })
+
+        const isJoin = messageType === MessageType.Join
+        if (isJoin) {
+          global.connection = webRTCConnection
+          await webRTCConnection.createOffer('chat')
+
+          await fetch('/api/chat', {
+            body: JSON.stringify({
+              message: {
+                text: JSON.stringify(webRTCConnection.localDescription),
+              },
+              roomUrl: url,
+              type: 'offer',
+            }),
+            credentials: 'include',
+            method: 'POST',
+          })
+        }
+
         if (sameUser) {
           return
+        }
+
+        const isLeave = messageType === MessageType.Leave
+        if (isLeave) {
+          webRTCConnection.setLocalDescription(null)
+          webRTCConnection.setRemoteDescription(null)
         }
 
         const description = JSON.parse(message.text)
 
         const isOffer = messageType === MessageType.Offer
         if (isOffer) {
-          const connection = createWebRTCConnection()
-          global.connection = connection
-          await connection.createAnswer(description)
-
-          connection.onOpen((e) => {
-            console.log('on Open remote', e.data)
-          })
-
-          connection.onData((e) => {
-            addMessage(JSON.parse(e.data).message)
-          })
+          await webRTCConnection.createAnswer(description)
+          console.log('create answer')
 
           await fetch('/api/chat', {
             body: JSON.stringify({
               message: {
-                text: JSON.stringify(connection.localDescription),
+                text: JSON.stringify(webRTCConnection.localDescription),
               },
               roomUrl: url,
               type: 'answer',
@@ -108,59 +268,53 @@ export const RoomView: FC<Props> = ({url, messagesHistory, user}) => {
 
         const isAnswer = messageType === MessageType.Answer
         if (isAnswer) {
-          await connectionInitiator.setRemoteDescription(description)
+          console.log('set answer', description)
+          await webRTCConnection.setRemoteDescription(description)
         }
-      })
+      }
+    })()
 
-      const connectionInitiator = createWebRTCConnection()
-      global.connection = connectionInitiator
-      await connectionInitiator.createOffer('chat')
-
-      connectionInitiator.onData((e) => {
-        addMessage(JSON.parse(e.data).message)
-      })
-
-      connectionInitiator.onOpen((e) => {
-        console.log('init open', e.data)
-      })
-
-      await fetch('/api/chat', {
+    window.onbeforeunload = () => {
+      fetch('/api/chat', {
         body: JSON.stringify({
-          message: {
-            text: JSON.stringify(connectionInitiator.localDescription),
-          },
           roomUrl: url,
-          type: 'offer',
+          type: 'leave',
         }),
         credentials: 'include',
         method: 'POST',
       })
-    })()
-  }, [url, user.id])
+    }
 
-  const send = async (e: FormEvent) => {
-    e.preventDefault()
-
-    const api: 'webrtc' | 'rest' = 'webrtc'
-    if (api === 'rest') {
-      await fetch('/api/chat', {
-        body: JSON.stringify(
-          createPayload({roomUrl: url, text, type: MessageType.Message})
-        ),
+    return () => {
+      fetch('/api/chat', {
+        body: JSON.stringify({
+          roomUrl: url,
+          type: 'leave',
+        }),
         credentials: 'include',
         method: 'POST',
       })
     }
+  }, [url, user.id])
+*/
 
-    if (api === 'webrtc') {
-      const data = await fetch('/api/messages', {
-        body: JSON.stringify({message: {text}, roomUrl: url}),
-        credentials: 'include',
-        method: 'POST',
-      }).then((res) => res.json())
-      addMessage(data.message)
-      global.connection.sendData(JSON.stringify(data))
+  const send = async (e: FormEvent) => {
+    e.preventDefault()
+
+    const data = await fetch('/api/messages', {
+      body: JSON.stringify({message: {text}, roomUrl: url}),
+      credentials: 'include',
+      method: 'POST',
+    }).then((res) => res.json())
+    addMessage(data.message)
+
+    const connection = usersMap.get(user.id)
+    if (!connection) {
+      throw new Error('connection not found')
     }
+
+    connection.sendData(JSON.stringify(data))
+
     setText('')
   }
 

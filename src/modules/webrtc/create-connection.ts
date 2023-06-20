@@ -14,6 +14,15 @@ export const createWebRTCConnection = () => {
   let dataChannel: RTCDataChannel | undefined
 
   return {
+    close() {
+      if (!dataChannel) {
+        throw new Error('DataChannel is not defined')
+      }
+
+      dataChannel.onopen = null
+      dataChannel.onmessage = null
+      connection.close()
+    },
     async createAnswer(offer: RTCSessionDescriptionInit) {
       await this.setRemoteDescription(offer)
 

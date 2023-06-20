@@ -27,6 +27,9 @@ enum MessageType {
   Offer = 'offer',
   Answer = 'answer',
   Message = 'message',
+  Init = 'init',
+  Join = 'join',
+  Leave = 'leave',
 }
 
 interface Payload {
@@ -39,6 +42,9 @@ interface Message {
   text: string
 }
 
+/**
+ * TODO: create different types for different messages
+ */
 interface SSEMessage {
   type: MessageType
   message: {
@@ -46,6 +52,23 @@ interface SSEMessage {
     sender: any
     room: any
   }
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var roomEmitterMap: Map<string, EventEmitter>
+}
+const usersByRoomIdMap =
+  globalThis.usersByRoomIdMap ?? new Map<string, Set<string>>()
+// Fix live reload in dev mode
+if (process.env.NODE_ENV !== 'production')
+  globalThis.usersByRoomIdMap = usersByRoomIdMap
+
+const getRoomUsers = (roomId: string) => {
+  return (
+    usersByRoomIdMap.get(roomId) ??
+    usersByRoomIdMap.set(roomId, new Set()).get(roomId)!
+  )
 }
 
 export const POST = async (request: Request) => {
@@ -65,11 +88,70 @@ export const POST = async (request: Request) => {
    */
 
   const originMessage = payload.message
+
+  const roomEmitter = getRoomEmitter(roomUrl)
+
+  if (payload.type === MessageType.Leave) {
+    const {user, room} = await startSession(async (dbProvider) => {
+      const authProvider = await createAuthProvider(dbProvider)
+      await authProvider.authenticate(token)
+
+      const roomProvider = await createRoomProvider(dbProvider)
+
+      return {
+        room: (await roomProvider.findRoom(roomUrl)).room,
+        user: (await authProvider.currentUser()).user,
+      }
+    })
+
+    const usersSet = getRoomUsers(room.id)
+    usersSet.delete(user.id)
+
+    const sseMessage: SSEMessage = {
+      message: {
+        room,
+        sender: user,
+        text: [...usersSet],
+      },
+      type: MessageType.Leave,
+    }
+    roomEmitter.emit('message', sseMessage)
+
+    return NextResponse.json({status: 'ok'})
+  }
+
+  if (payload.type === MessageType.Join) {
+    const {user, room} = await startSession(async (dbProvider) => {
+      const authProvider = await createAuthProvider(dbProvider)
+      await authProvider.authenticate(token)
+
+      const roomProvider = await createRoomProvider(dbProvider)
+
+      return {
+        room: (await roomProvider.findRoom(roomUrl)).room,
+        user: (await authProvider.currentUser()).user,
+      }
+    })
+
+    const usersSet = getRoomUsers(room.id)
+    usersSet.add(user.id)
+
+    const sseMessage: SSEMessage = {
+      message: {
+        room,
+        sender: user,
+        text: `${user.username} joined the room`,
+      },
+      type: MessageType.Join,
+    }
+    roomEmitter.emit('message', sseMessage)
+
+    return NextResponse.json({status: 'ok'})
+  }
+
   if (!originMessage.text) {
     throw new Error('No text provided')
   }
-
-  const roomEmitter = getRoomEmitter(roomUrl)
 
   if (payload.type === MessageType.Message) {
     const {message} = await startSession(async (dbProvider) => {
@@ -142,6 +224,14 @@ export const GET = async (request: Request) => {
   const roomEmitter = getRoomEmitter(roomUrl)
   const eventStream = new ReadableStream({
     async start(controller) {
+      const initMessage: SSEMessage = {
+        type: MessageType.Init,
+      }
+
+      controller.enqueue(
+        new TextEncoder().encode(`data: ${JSON.stringify(initMessage)}\n\n`)
+      )
+
       roomEmitter.on('message', (message: SSEMessage) => {
         controller.enqueue(
           new TextEncoder().encode(`data: ${JSON.stringify(message)}\n\n`)
